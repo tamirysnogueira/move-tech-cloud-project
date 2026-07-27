@@ -5,7 +5,7 @@ on:
 
 env:
   REGISTRY: container-registry.br-se1.magalu.cloud
-  IMAGE_NAME: cloud-application
+  IMAGE_NAME: cloud-project
 
 jobs:
   test:
@@ -52,4 +52,4 @@ jobs:
         export KUBECONFIG=kubeconfig.yaml
         export MGC_REGISTRY_NAME=${{ secrets.MGC_REGISTRY_NAME }}
         envsubst < k8s/app.yaml | kubectl apply -f -
-        kubectl rollout status deployment/cloud-application
+        kubectl rollout status deployment/cloud-project
