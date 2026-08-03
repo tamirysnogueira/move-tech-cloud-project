@@ -14,6 +14,8 @@ spec:
       labels:
         app: cloud-project
     spec:
+      imagePullSecrets:
+      - name: registry-secret
       containers:
       - name: cloud-project
         image: container-registry.br-se1.magalu.cloud/${MGC_REGISTRY_NAME}/cloud-project:latest
@@ -30,7 +32,7 @@ spec:
             path: /health
             port: 8000
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
         env:
         - name: DATABASE_URL
           valueFrom:
@@ -53,5 +55,6 @@ spec:
     app: cloud-project
   ports:
   - name: http
-  - port: 80
+    port: 80
     targetPort: 8000
+    protocol: TCP

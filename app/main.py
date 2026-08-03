@@ -1,8 +1,9 @@
+import time
 import logging
-import json
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, status, Depends
+import structlog
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
 from scalar_fastapi import get_scalar_api_reference
@@ -14,21 +15,34 @@ from app.models import Base, Order, Item
 
 Base.metadata.create_all(bind=engine)
 
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
 
-class JsonFormatter(logging.Formatter):
-    def format(self, record):
-        log = {
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "logger": record.name,
-        }
-        return json.dumps(log)
+_formatter = structlog.stdlib.ProcessorFormatter(
+    processor=structlog.processors.JSONRenderer(),
+    foreign_pre_chain=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ],
+)
 
+_handler = logging.StreamHandler()
+_handler.setFormatter(_formatter)
 
-handler = logging.StreamHandler()
-handler.setFormatter(JsonFormatter())
-logging.basicConfig(level=logging.INFO, handlers=[handler])
-logger = logging.getLogger(__name__)
+logging.root.setLevel(logging.INFO)
+logging.root.handlers = [_handler]
+
+logger = structlog.get_logger()
 
 app = FastAPI(
     title="API de Pedidos",
@@ -39,6 +53,23 @@ app = FastAPI(
 )
 
 Instrumentator().instrument(app).expose(app)
+
+
+@app.middleware("http")
+async def request_logger(request: Request, call_next):
+    request_id = str(uuid4())
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000)
+    logger.info(
+        "request",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    return response
 
 
 @app.get("/docs", include_in_schema=False)
@@ -97,7 +128,7 @@ def create_order(body: OrderIn, db: Session = Depends(get_db)):
     db.add(order)
     db.commit()
     db.refresh(order)
-    logger.info(json.dumps({"event": "order_created", "order_id": order.id, "customer": order.customer}))
+    logger.info("order_created", order_id=order.id, customer=order.customer)
     return order_to_dict(order)
 
 
