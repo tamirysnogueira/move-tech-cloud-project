@@ -47,6 +47,12 @@ jobs:
       run: |
         echo "${{ secrets.MGC_KUBECONFIG }}" > kubeconfig.yaml
 
+    - name: Testar conexão com o cluster
+      run: |
+        export KUBECONFIG=kubeconfig.yaml
+        kubectl version --request-timeout=15s
+        kubectl get nodes --request-timeout=15s
+
     - name: Criar Secret do banco
       run: |
         export KUBECONFIG=kubeconfig.yaml
