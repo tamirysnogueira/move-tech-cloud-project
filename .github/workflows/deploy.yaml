@@ -22,8 +22,15 @@ jobs:
         pip install poetry
         poetry install --no-root
 
-    - name: Executar testes
+    - name: Executar testes com cobertura
+      # O addopts do pyproject já roda com --cov e falha se ficar abaixo de 90%.
       run: poetry run pytest
+
+    - name: Publicar cobertura no resumo do job
+      if: always()
+      run: |
+        echo '### Cobertura de testes' >> "$GITHUB_STEP_SUMMARY"
+        poetry run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
 
   build-and-deploy:
     needs: test
@@ -47,11 +54,14 @@ jobs:
       run: |
         echo "${{ secrets.MGC_KUBECONFIG }}" > kubeconfig.yaml
 
-    - name: Testar conexão com o cluster
+    - name: Criar Secret do registry
       run: |
         export KUBECONFIG=kubeconfig.yaml
-        kubectl version --request-timeout=15s
-        kubectl get nodes --request-timeout=15s
+        kubectl create secret docker-registry registry-secret \
+          --docker-server=${{ env.REGISTRY }} \
+          --docker-username=${{ secrets.MGC_REGISTRY_USER }} \
+          --docker-password=${{ secrets.MGC_REGISTRY_PASSWORD }} \
+          --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Criar Secret do banco
       run: |
@@ -65,4 +75,5 @@ jobs:
         export KUBECONFIG=kubeconfig.yaml
         export MGC_REGISTRY_NAME=${{ secrets.MGC_REGISTRY_NAME }}
         envsubst < k8s/app.yaml | kubectl apply -f -
+        kubectl apply -f k8s/hpa.yaml
         kubectl rollout status deployment/cloud-project

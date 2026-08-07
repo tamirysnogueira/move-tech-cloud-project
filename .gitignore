@@ -12,3 +12,13 @@ dist/
 .claude-flow/
 .mcp.json
 
+# Cobertura de testes
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Saídas locais do teste de carga (k6)
+resumo.md
+resultado.json
+
