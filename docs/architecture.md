@@ -89,7 +89,7 @@ probes do Kubernetes e Grafana).
 | --------------- | ----------------------------------------------------------------- | ---- |
 | Disponibilidade | Erros 5xx e uptime das probes (`/health`) no Grafana              | 99,5% mensal |
 | Latência        | `histogram_quantile(0.95, ...)` sobre `http_request_duration_seconds` do `/metrics` | P95 < 500 ms |
-| Escalabilidade  | Teste de carga (k6) + `rate(http_requests_total[1m])`             | 300 req/s sem degradar |
+| Escalabilidade  | Teste de carga [`load/k6/load-test.js`](../load/k6/load-test.js) + `rate(http_requests_total[1m])` | 300 req/s sem degradar |
 | Custo           | VM + DBaaS + IP na calculadora MGC                                | Teto definido em ADR |
 
 ---
@@ -117,6 +117,42 @@ de pedidos.
 
 ---
 
+## Recursos e escalonamento automático (HPA)
+
+Os números abaixo saem diretamente dos manifests e são a base para o autoscaling e para o
+teste de carga.
+
+**Recursos por pod** ([`k8s/app.yaml`](../k8s/app.yaml)):
+
+| | CPU | Memória |
+| --- | --- | --- |
+| `requests` | 100m | 128Mi |
+| `limits` | 500m | 256Mi |
+
+As `requests` são o que o scheduler reserva e a base que o HPA usa para calcular a
+utilização; os `limits` protegem a VM (2 vCPU / 2 GB) de um pod consumir tudo.
+
+**Autoscaler** ([`k8s/hpa.yaml`](../k8s/hpa.yaml)):
+
+| Parâmetro | Valor |
+| --- | --- |
+| `minReplicas` | 2 |
+| `maxReplicas` | 6 |
+| Métrica-alvo | CPU 70% da `request` |
+
+Com `requests.cpu = 100m` e alvo de 70%, cada pod escala ao passar de ~70m de CPU média.
+O HPA depende do **metrics-server** (incluso no K3s) e é aplicado no deploy junto do
+`app.yaml`.
+
+> **Validação:** o teste de carga [`load/k6/load-test.js`](../load/k6/load-test.js) —
+> executável pelo workflow **Teste de carga (k6)** ou localmente por
+> [`run-load-test.sh`](../run-load-test.sh) — sobe uma carga em rampa (VUs configuráveis)
+> exercitando os endpoints de pedidos e **falha se o P95 passar de 500 ms ou a taxa de erro
+> passar de 1%**, exatamente os alvos da tabela de requisitos não-funcionais. O throughput
+> alcançado (req/s) é reportado no resumo, para comparar com o alvo de 300 req/s.
+
+---
+
 ## Trade-offs
 
 Toda escolha técnica tem custos e benefícios. A tabela abaixo resume as principais
@@ -141,14 +177,11 @@ tanto os próximos passos naturais quanto lacunas identificadas na implementaç�
 ### Escalabilidade
 
 A aplicação é **stateless**, então escala na horizontal — mais réplicas atrás do
-balanceador. Hoje são **2 réplicas fixas**; o próximo passo natural é o **HPA (Horizontal
-Pod Autoscaler)**, que ajusta esse número automaticamente pela utilização de CPU (ex.:
-mínimo 2, máximo 6, alvo de 70%).
-
-> ⚠️ **Pré-requisito do HPA já identificado no código:** o `Deployment` em
-> [`k8s/app.yaml`](../k8s/app.yaml) **não declara `resources.requests`/`limits`**. Sem
-> `requests.cpu`, o HPA não consegue calcular a utilização e não funciona. Definir
-> requests/limits é, portanto, o primeiro passo antes de ativar o autoscaler.
+balanceador. O **HPA (Horizontal Pod Autoscaler)** já está configurado
+([`k8s/hpa.yaml`](../k8s/hpa.yaml)): ajusta as réplicas automaticamente pela utilização de
+CPU (mínimo 2, máximo 6, alvo de 70%), apoiado nas `resources.requests` definidas no
+Deployment. Os valores concretos estão na seção
+[Recursos e escalonamento automático](#recursos-e-escalonamento-automático-hpa).
 
 Vale registrar também que **mais réplicas não resolvem um gargalo de banco** — o PostgreSQL
 escala na vertical e costuma saturar primeiro. Sob alta carga, o limite tende a ser o banco
@@ -156,16 +189,16 @@ escala na vertical e costuma saturar primeiro. Sob alta carga, o limite tende a 
 
 ### Próximos passos naturais (do curso)
 
-| Melhoria | Por quê |
-| --- | --- |
-| HTTPS / TLS | Toda API em produção deve ser acessada por HTTPS |
-| Autoscaler (HPA) | Escala automaticamente conforme a carga |
-| Versionamento de API (`/v1/orders`) | Permite evoluir sem quebrar clientes existentes |
-| Rate limiting | Evita abuso e protege o banco de sobrecargas |
-| Cache (Redis) | Reduz consultas repetidas ao banco |
-| Migrações de schema (Alembic) | Controle de versão das mudanças no banco |
-| Testes de carga (k6) | Valida o comportamento sob alto tráfego |
-| Migrar para MKS | Quando precisar de HA real: basta trocar o `kubeconfig` — os manifests YAML são idênticos |
+| Melhoria | Por quê | Status |
+| --- | --- | --- |
+| Autoscaler (HPA) | Escala automaticamente conforme a carga | ✅ Feito ([`k8s/hpa.yaml`](../k8s/hpa.yaml)) |
+| Testes de carga (k6) | Valida o comportamento sob alto tráfego | ✅ Feito ([`load/k6/load-test.js`](../load/k6/load-test.js)) |
+| HTTPS / TLS | Toda API em produção deve ser acessada por HTTPS | Pendente |
+| Versionamento de API (`/v1/orders`) | Permite evoluir sem quebrar clientes existentes | Pendente |
+| Rate limiting | Evita abuso e protege o banco de sobrecargas | Pendente |
+| Cache (Redis) | Reduz consultas repetidas ao banco | Pendente |
+| Migrações de schema (Alembic) | Controle de versão das mudanças no banco | Pendente |
+| Migrar para MKS | Quando precisar de HA real: basta trocar o `kubeconfig` — os manifests YAML são idênticos | Pendente |
 
 ### Outros pontos de melhoria identificados no projeto
 
@@ -174,7 +207,7 @@ atuais:
 
 | Melhoria | Contexto no projeto | Prioridade |
 | --- | --- | --- |
-| **`resources.requests`/`limits` nos pods** | O `Deployment` não os define — impede o HPA e deixa o scheduler sem noção de capacidade | Alta |
+| ~~**`resources.requests`/`limits` nos pods**~~ | ✅ Definidos em [`k8s/app.yaml`](../k8s/app.yaml) — habilitou o HPA e deu ao scheduler noção de capacidade | Feito |
 | **Tags de imagem imutáveis** (`:sha-<git_sha>`) | O deploy usa `:latest` (mutável) — dificulta rollback e rastreabilidade (ver [ADR 003](adr/003-container-registry.md)) | Alta |
 | **CD contínuo em `push`** | O workflow hoje dispara só por `workflow_dispatch` (manual); automatizar o deploy na branch principal aumenta a consistência (ver [ADR 004](adr/004-cicd-github-actions.md)) | Média |
 | **Namespace dedicado** | Todos os recursos vivem em `default`; um namespace próprio isola e organiza o ambiente | Média |
