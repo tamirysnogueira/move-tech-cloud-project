@@ -24,7 +24,7 @@ ecossistema Kubernetes.
 ## Decisão
 
 Instrumentar a API com **`prometheus-fastapi-instrumentator`**, expondo `/metrics` no
-formato Prometheus, e coletar via **`ServiceMonitor`** (`servicemonitor.yaml`, scrape a cada
+formato Prometheus, e coletar via **`ServiceMonitor`** (`k8s/servicemonitor.yaml`, scrape a cada
 30s) para o **Prometheus** in-cluster, com dashboards no **Grafana**. Os logs da aplicação
 são **estruturados em JSON** (`JsonFormatter` em `app/main.py`). Critério: medir os
 requisitos não-funcionais com ferramentas open source nativas do Kubernetes, sem custo de
