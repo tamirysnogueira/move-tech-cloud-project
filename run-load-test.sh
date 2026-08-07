@@ -58,7 +58,7 @@ echo
 if command -v k6 > /dev/null 2>&1; then
   echo "→ usando k6 nativo ($(k6 version 2>&1 | head -1))"
   echo
-  BASE_URL="$BASE_URL" VUS="$VUS" DURATION="$DURATION" P95_MS="$P95_MS" \
+  BASE_URL="$BASE_URL" VUS="$VUS" DURATION="$DURATION" P95_ALVO_MS="$P95_MS" \
     k6 run "$TEST_FILE"
 
 elif command -v docker > /dev/null 2>&1; then
@@ -77,7 +77,7 @@ elif command -v docker > /dev/null 2>&1; then
     -e BASE_URL="$BASE_URL" \
     -e VUS="$VUS" \
     -e DURATION="$DURATION" \
-    -e P95_MS="$P95_MS" \
+    -e P95_ALVO_MS="$P95_MS" \
     grafana/k6:latest run /work/load/k6/load-test.js
 
 else
@@ -95,11 +95,11 @@ fi
 
 # -------------------------------------------------------------------- saída
 echo
-if [[ -f summary.md ]]; then
+if [[ -f resumo.md ]]; then
   echo "════════════════════════════════════════════"
-  cat summary.md
+  cat resumo.md
   echo "════════════════════════════════════════════"
   echo
-  echo "→ resumo salvo em ./summary.md"
+  echo "→ resumo salvo em ./resumo.md"
   echo "  copie estes números para a seção de escalabilidade do docs/architecture.md"
 fi

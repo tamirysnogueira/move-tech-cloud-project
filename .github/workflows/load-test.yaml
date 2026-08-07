@@ -1,0 +1,112 @@
+name: Teste de carga (k6)
+
+on:
+  workflow_dispatch:
+    inputs:
+      # Parâmetros de tuning: visíveis nos logs e ajustáveis a cada execução.
+      vus:
+        description: 'Usuários virtuais simultâneos'
+        required: true
+        default: '20'
+        type: string
+      duration:
+        description: 'Tempo no patamar de carga (ex.: 2m)'
+        required: true
+        default: '2m'
+        type: string
+      ramp:
+        description: 'Tempo de rampa até os VUs'
+        required: true
+        default: '30s'
+        type: string
+      p95_alvo_ms:
+        description: 'SLO de latência P95 em ms — o job falha se estourar'
+        required: true
+        default: '500'
+        type: string
+      base_url:
+        description: 'Opcional: sobrescreve a URL. Vazio = descobre o EXTERNAL-IP no cluster.'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  carga:
+    name: Carga (k6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # O kubeconfig é a única credencial aqui — fica em Secret, não a URL.
+    - name: Configurar kubectl
+      env:
+        MGC_KUBECONFIG: ${{ secrets.MGC_KUBECONFIG }}
+      run: |
+        echo "$MGC_KUBECONFIG" > kubeconfig.yaml
+        chmod 600 kubeconfig.yaml
+
+    - name: Resolver a URL alvo
+      id: alvo
+      env:
+        OVERRIDE: ${{ inputs.base_url }}
+      run: |
+        set -euo pipefail
+        if [ -n "$OVERRIDE" ]; then
+          URL="${OVERRIDE%/}"
+          echo "Usando URL informada manualmente."
+        else
+          export KUBECONFIG=kubeconfig.yaml
+          IP=$(kubectl get svc cloud-project -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          if [ -z "$IP" ]; then
+            IP=$(kubectl get svc cloud-project -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          fi
+          if [ -z "$IP" ]; then
+            echo "::error::Não encontrei o EXTERNAL-IP do Service cloud-project. O LoadBalancer já provisionou?"
+            exit 1
+          fi
+          URL="http://$IP"
+        fi
+        echo "Alvo do teste: $URL"
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+    - name: Instalar o k6
+      uses: grafana/setup-k6-action@v1
+
+    - name: Executar o teste de carga
+      id: k6
+      continue-on-error: true
+      run: |
+        k6 run load/k6/load-test.js \
+          -e BASE_URL='${{ steps.alvo.outputs.url }}' \
+          -e VUS='${{ inputs.vus }}' \
+          -e DURATION='${{ inputs.duration }}' \
+          -e RAMP='${{ inputs.ramp }}' \
+          -e P95_ALVO_MS='${{ inputs.p95_alvo_ms }}'
+
+    - name: Publicar o resumo
+      if: always()
+      run: |
+        if [ -f resumo.md ]; then
+          cat resumo.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo 'O k6 não chegou a gerar resumo — veja o log do passo anterior.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Guardar os resultados
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: carga-${{ github.run_number }}
+        path: |
+          resumo.md
+          resultado.json
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Falhar se algum threshold foi violado
+      if: steps.k6.outcome == 'failure'
+      run: |
+        echo "::error::Thresholds do k6 violados — veja o resumo do job."
+        exit 1

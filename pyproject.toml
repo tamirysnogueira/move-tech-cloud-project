@@ -16,10 +16,20 @@ prometheus-fastapi-instrumentator = "^7.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
+pytest-cov = "^6.0.0"
 httpx = "^0.28.0"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# Cobertura sempre visível na tela ao final e barra mínima de 90%.
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
 
 [build-system]
 requires = ["poetry-core"]
